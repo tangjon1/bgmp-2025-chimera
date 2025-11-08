@@ -1,0 +1,13 @@
+#Summary
+#Generated on	Sat Nov 01 17:04:27 PDT 2025
+#Version	5
+chroms	1
+bases	16576
+defined	576
+undefined	16000
+contigs	1
+scaffolds	1
+interpad	300
+source	/tmp/tmp.0T6sSj4oUU/05_alignment/reference.fasta
+bytes	608
+last modified	1762041867000
