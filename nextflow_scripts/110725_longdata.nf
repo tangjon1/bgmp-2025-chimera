@@ -10,7 +10,7 @@ process bbmerge{
     output:
         path "${sampleId}.merged.fastq.gz"
 
-    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/01-bbmerge_out/", mode: 'copy' 
+    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/01-bbmerge/", mode: 'copy' 
 
     script:
     """
@@ -18,9 +18,9 @@ process bbmerge{
     in1=${read1}\
     in2=${read2}\
     out=${sampleId}.merged.fastq.gz \
-    outu1=/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/01-bbmerge_out/${sampleId}_R1.unmerged.fastq.gz \
-    outu2=/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/01-bbmerge_out/${sampleId}_R2.unmerged.fastq.gz\
-    ihist=/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/01-bbmerge_out/${sampleId}.bbmerge.stats.txt
+    outu1=/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/01-bbmerge/${sampleId}_R1.unmerged.fastq.gz \
+    outu2=/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/01-bbmerge/${sampleId}_R2.unmerged.fastq.gz\
+    ihist=/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/01-bbmerge/${sampleId}.bbmerge.stats.txt
     """
 }
 
@@ -32,17 +32,17 @@ process hts_primers{
     output:
         path "${merged_file.simpleName}.flip.trim_SE.fastq.gz"
     
-    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/02-hts_primers_out/", mode: 'copy' //try move?
+    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/02-hts_primers/", mode: 'copy' //try move?
 
     script:
     //mkdir -p initializes the directory since just outputting the .stats.txt file is not enough to also make the directory
     """
-    mkdir -p /projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/02-hts_primers_out/
+    mkdir -p /projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/02-hts_primers/
     /usr/bin/time -v hts_Primers -U ${merged_file} -f ${merged_file.simpleName}.flip.trim \
     -P /projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/stubby_adapters/HK_ABC-stub_FWD.fasta \
     -Q /projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/stubby_adapters/HK_ABC-stub_REV.fasta \
     -l 5 -x -e 6 -d 6 \
-    -L /projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/02-hts_primers_out/${merged_file.simpleName}.flip.stats.txt -F
+    -L /projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/02-hts_primers/${merged_file.simpleName}.flip.stats.txt -F
     """
 }
 
@@ -52,7 +52,7 @@ process make_barcode_fasta {
     output:
         path "${trimmed_file.simpleName}.cut.txt"
 
-    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/03-make_barcode_fasta_out/", mode: 'copy'
+    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/03-make_barcode_fasta/", mode: 'copy'
 
     script:
     //changed the "20" to "24" when running our data
@@ -67,7 +67,7 @@ process count_barcodes{
         path barcode_file
     output:
         path "${barcode_file.simpleName}.count.txt"
-    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/04-count_barcodes_out/", mode: 'copy'
+    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/04-count_barcodes/", mode: 'copy'
 
     script:
     //added grep command to remove empty lines before unique counting
@@ -87,7 +87,7 @@ process star_code{
     output:
         path "${count_file.simpleName}.collapse.d1.tsv"
     
-    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110625_shortdata/05-starcode_out", mode: 'copy'
+    publishDir "/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/110725_longdata/05-starcode", mode: 'copy'
     
     script:
     """
@@ -98,7 +98,7 @@ process star_code{
 workflow {
     // Create channels for paired reads
     read_pairs = Channel
-        .fromFilePairs('/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/ShortIlluminaData/*{R1,R2}_001.fastq')
+        .fromFilePairs('/projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera-fixed/LongIlluminaData/*{R1,R2}_001.fastq.gz')
         .map { sampleId, reads -> tuple(sampleId, reads[0], reads[1]) }
         read_pairs.view()
     bbmerge(read_pairs)
