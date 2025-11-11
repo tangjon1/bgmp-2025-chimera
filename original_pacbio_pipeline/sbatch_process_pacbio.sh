@@ -9,6 +9,7 @@
 
 set -e
 
+# INPUTS ==================================================
 # Input BAM file to process
 input_file="/projects/bgmp/shared/groups/2025/chimera/jonat/bgmp-2025-chimera/original_pacbio_pipeline/input_files/test.bam"
 # Input reference genes file (FASTA) to use for alignment
@@ -17,6 +18,7 @@ input_ref_genes_file="/projects/bgmp/shared/groups/2025/chimera/jonat/bgmp-2025-
 input_ref_proteins_file="/projects/bgmp/shared/groups/2025/chimera/jonat/bgmp-2025-chimera/original_pacbio_pipeline/input_files/dcus_mut.proteins"
 # Output directory to publish results
 output_dir="/projects/bgmp/shared/groups/2025/chimera/jonat/bgmp-2025-chimera/original_pacbio_pipeline/results/"
+# =========================================================
 
 run_iter_num=$(ls -1 -d $output_dir/*/ | sed -r 's/.+_(.+)\//\1/' | sort -n | awk '{num=$1} END{print num+1}')
 results_dir="${output_dir}/results_${run_iter_num}"
