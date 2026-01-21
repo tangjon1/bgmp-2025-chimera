@@ -12,26 +12,23 @@ import gzip
 import tempfile
 import subprocess
 
-# Concurrency
-import concurrent.futures
-import multiprocessing
-
 # Translation
 from Bio.Seq import Seq
 
 # Type annotation
-from typing import NamedTuple, cast, Literal, IO, Any, TextIO, Iterator, Callable
-from io import TextIOWrapper
-from multiprocessing.managers import DictProxy
+from typing import NamedTuple, cast, Literal, IO, Any, TextIO, Iterator, Iterable, Callable
+from io import TextIOWrapper, StringIO
+from collections.abc import Sequence
 
 # Random sampling
 import random
 
 # Consensus calling
 from dataclasses import dataclass, field
-from collections import defaultdict
-from operator import attrgetter
+from collections import defaultdict, Counter
 from statistics import mean
+from math import log, exp
+import editdistance
 
 # STDERR access
 import sys
@@ -44,6 +41,17 @@ class SeqRecord(NamedTuple):
     id: str
     seq: str
     qual: str | None
+
+@dataclass()
+class SeqConsensusData:
+    '''TODO'''
+    # The cumulative per-base quality score error probability exponents
+    # (must be exponentiated with e to derive effective error probability)
+    qual_seq: list[int | float]
+    # The absolute frequency of this sequence in the cluster
+    abs_freq: int = 1
+    # Score
+    score: int | float = 0
 
 
 @dataclass(slots=True)
@@ -74,18 +82,20 @@ def get_args() -> argparse.Namespace:
     
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('-i', '--input-file', help="Input FASTA/Q containing sequences to call consensus on", required=True)
-    common.add_argument('-o', '--output-file', help="Output sequence file", required=True)
+    common.add_argument('-o', '--output-file', help="Output sequence file. If omitted, print to STDOUT")
     common.add_argument('-f', '--input-format', help="Force the program to register the input file as a specific format", choices=['auto', 'fasta', 'fastq'], default='auto')
     common.add_argument('-t', '--num-threads', help="The number of cores to be used by the program", type=int, default=1)
 
     sort_parser = subparsers.add_parser("sort", help="Sort a FASTA/Q file by header, optionally renaming headers based on a provided clustering file; headers that are members of clusters will be renamed to the cluster representative, and sorted accordingly", parents=[common])
     sort_parser.add_argument('-c', '--cluster-file', help="Allows for mapping multiple headers to a singular header. Input TSV file with two columns, where the first column contains a singular header (does not need to exist in the FASTA/Q file), and the second column contains a series of comma-delimited headers (should be in the FASTA/Q file) to be considered for consensus calling together")
 
-    consensus_parser = subparsers.add_parser("consensus", help=f"Call consensus for sequences in a sorted FASTA/Q file (see the '{path.basename(__file__)} sort' command) on a per-header basis", parents=[common])
-    consensus_parser.add_argument('-s', '--sample-size', help="For clusters with more sequences than this specified size, use a random sample of sequences from the cluster instead", type=int, default=500)
+    consensus_parser = subparsers.add_parser("consensus", help=f"Call consensus for sequences in a sorted FASTA/Q file (see the '{path.basename(__file__)} sort' command) on a per-header basis (id-cluster)", parents=[common])
+    consensus_parser.add_argument('-s', '--sample-size', help="For id-clusters with more sequences than this specified size, use a random sample of sequences from the cluster instead", type=int, default=500)
     consensus_parser.add_argument('-r', '--random-seed', help="Set a random seed for random sampling (reproducibility)")
-    consensus_parser.add_argument('-p', '--plurality-min', help="A value p in the interval [0, 1]. Sequences must occur at a relative frequency greater than p across the cluster to be considered for consensus. 0: No minimum relative frequency; 1: Sequence must comprise entire cluster", type=unit_interval, default=0.5)
-    consensus_parser.add_argument('-m', '--collision-margin', help="A value m in the interval [0, 1]. The difference in relative frequency between the sequences with the highest and second-highest frequencies must be greater than m in order to not be considered a collision", type=unit_interval, default=0.1)
+    consensus_parser.add_argument('-g', '--gap-penalty', help="A value g such that when normalizing scores by length of sequences, add g to the divisor for every gap in the aligned sequence", type=unit_interval, default=0.1)
+    consensus_parser.add_argument('-l', '--lclust-similarity', help="A value l in the interval [0, 1]. Represents the sequence similarity used when clustering by Levenshtein distance (l-cluster), as a fraction of the length of the longer of the two sequences; 1 = do not calculate distances)", type=unit_interval, default=1)
+    consensus_parser.add_argument('-p', '--lclust-plurality-min', help="A value p in the interval [0, 1]. l-cluster sequences must comprise a relative frequency greater than p across the id-cluster for the id-cluster to be considered for consensus. 0: No minimum relative frequency; 1 = l-cluster must comprise entire id-cluster", type=unit_interval, default=0.5)
+    consensus_parser.add_argument('-m', '--lclust-collision-margin', help="A value m in the interval [0, 1]. The difference in relative frequency between the l-clusters with the highest and second-highest frequencies must be greater than m in order to not be considered a collision", type=unit_interval, default=0.1)
 
     return parser.parse_args()
 
@@ -100,6 +110,12 @@ def open_read(file_path: str) -> IO[Any] | TextIOWrapper:
     if file_path.endswith(".gz"):
         return gzip.open(file_path, 'rt')
     return open(file_path, 'r')
+
+
+def open_write(file_path: str, mode='w'):
+    if file_path == '-' or file_path is None:
+        return sys.stdout
+    return open(file_path, mode)
 
 
 def get_fasta_records(fasta_file_handle: IO[Any] | TextIO) -> Iterator[SeqRecord]:
@@ -213,7 +229,7 @@ class ClusterSorter:
         with (
             open_read(self.input_file_path) as input_file_handle,
             tempfile.NamedTemporaryFile('w+') as temp_file_handle,
-            open(self.output_sorted_file, 'w') as output_sorted_file
+            open_write(self.output_sorted_file) as output_sorted_file
         ):
             for seq_record in self.record_generator(input_file_handle):
                 header = self.get_cluster_rep(seq_record.id)
@@ -334,7 +350,6 @@ class ConsensusCaller:
         top2: tuple[str | None, AggregateSeqData] = (None, AggregateSeqData())
         for k, v in cluster_data_by_seq.items():
             rel_freq = cluster_data_by_seq[k].abs_freq / len(cluster)
-            print(cluster_data_by_seq[k].abs_freq, len(cluster), rel_freq)
             cluster_data_by_seq[k].rel_freq = rel_freq
             if rel_freq > top1[1].rel_freq:
                 top2 = top1
@@ -347,38 +362,242 @@ class ConsensusCaller:
             top1[1].rel_freq = float('inf')
 
         # Return the highest-plurality record
-        if top1[1].rel_freq > plurality_min and top1[1].rel_freq - top2[1].rel_freq > collision_margin:
-            return SeqRecord(seq_record.id, cast(str, top1[0]), None), min(top1[1].rel_freq, 1), len(cluster)
+        if top1[1].rel_freq > plurality_min:
+            if top1[1].rel_freq - top2[1].rel_freq > collision_margin:
+                return SeqRecord(seq_record.id, cast(str, top1[0]), None), min(top1[1].rel_freq, 1), len(cluster)
+            else:
+                # Attempt to resolve collision
+                pass # Not implemented yet
 
 
-    def call_consensuses(self, max_sample_size: int, plurality_min: float, collision_margin: float):
+    @staticmethod
+    def msa(sequences: Iterable[str]) -> Iterator[SeqRecord]:
+        '''Perform multiple sequence alignment using MAFFT'''
+        # Cast the list of sequences into FASTA format
+        # (redundant for FASTA input files but seems like the most valid approach, need to do this anyway for FASTQ inputs)
+        fasta_str: str = ""
+        for i, seq in enumerate(sequences):
+            fasta_str += f">S{i}\n{seq}\n"
+
+        msa_result = subprocess.Popen(
+            ["mafft", "--preservecase", "--auto", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding='utf-8',
+            text=True
+        )
+        out, _ = msa_result.communicate(input=fasta_str)
+
+        return get_fasta_records(StringIO(out))
+
+
+    @staticmethod
+    def cluster_seqs_by_ldist(seqs: Sequence[str], similarity: float) -> list[list[int]]:
+        """
+        Cluster unique sequences by Levenshtein distance, where each cluster contains sequences within the specified distance
+        The returned list contains a lists of indices, where each index corresponds to the index of the sequence in the input data
+        """
+        # Get the number of sequences
+        # Define an empty matrix with the length of the number of sequences,
+        # where each index is a list of indices that correspond to sequences that are within the max_dist threshold
+        # This represents a graph where nodes are sequences and edges connect nearby sequences
+        num_seqs: int = len(seqs)
+        adj: list[list[int]] = [[] for _ in range(num_seqs)]
+
+        # Populate the matrix by checking the distances of each sequence from each other;
+        # For both sequences, add the corresponding sequence to the appropriate list
+        for i in range(num_seqs):
+            for j in range(i + 1, num_seqs):
+                # Convert the similarity into the maximum distance between two sequences, based on the longer sequence
+                max_dist = (1 - similarity) * max(len(seqs[i]), len(seqs[j]))
+                if editdistance.eval(seqs[i], seqs[j]) <= max_dist:
+                    adj[i].append(j)
+                    adj[j].append(i)
+
+        # Build the clusters from connected nodes
+        # Initialize a list to track which sequences have already been visited
+        visited: list[bool] = [False] * num_seqs
+        clusters: list[list[int]] = []
+
+        # Iterate through all nodes; for each unvisited node,
+        # add its neighbors (recursively) to the active cluster
+        for i in range(num_seqs):
+            if not visited[i]:
+                stack = [i]
+                comp = []
+                visited[i] = True
+                while stack:
+                    u = stack.pop()
+                    comp.append(u)
+                    for v in adj[u]:
+                        if not visited[v]:
+                            visited[v] = True
+                            stack.append(v)
+                clusters.append(comp)
+
+        return clusters
+
+    @staticmethod
+    def call_consensus_for_cluster_weighted(cluster: list[SeqRecord], lcluster_similarity: float, lcluster_plurality_min: float, lcluster_collision_margin, gap_penalty: int | float) -> tuple[SeqRecord, float] | None:
+        '''TODO'''
+        # Get the frequency of each sequence in the cluster
+        seq_data_dict: dict[str, SeqConsensusData] = dict()
+        for seq_record in cluster:
+            if seq_record.seq not in seq_data_dict:
+                seq_data_dict[seq_record.seq] = SeqConsensusData(qual_seq=[0] * len(seq_record.seq))
+            else:
+                seq_data_dict[seq_record.seq].abs_freq += 1
+            if seq_record.qual is not None:
+                for i, qual_char in enumerate(seq_record.qual):
+                    seq_data_dict[seq_record.seq].qual_seq[i] += (-ConsensusCaller.phred_offset(qual_char) / 10) * log(10)
+        
+        # LEVENSHTEIN DISTANCE STEP --------------------------------------
+
+        # Use Levenshtein dist to determine if enough of the sequences are drastically different (and count that as a collision)
+        seq_data_seqs: list[str] = list(seq_data_dict.keys())
+
+        # Group seqs by the given similarity
+        # Ultimately produce a list relative frequencies of each lcluster (as implemented, unassociated with sequences)
+        rel_lcluster_freqs: list[int | float]
+        if lcluster_similarity < 1:
+            lclusters: list[list[int]] = ConsensusCaller.cluster_seqs_by_ldist(seq_data_seqs, lcluster_similarity)
+        
+            # Track the total number of reads in each cluster
+            lcluster_read_counts: list[int] = list()
+            for lcluster in lclusters:
+                cluster_sum = 0
+                for seq_data_index in lcluster:
+                    cluster_sum += seq_data_dict[seq_data_seqs[seq_data_index]].abs_freq
+                lcluster_read_counts.append(cluster_sum)
+                
+            assert sum(lcluster_read_counts) == len(cluster), "Cluster read count mismatch"
+
+            # Convert to relative frequencies
+            rel_lcluster_freqs = [f / len(cluster) for f in lcluster_read_counts]
+        else:
+            rel_lcluster_freqs = list()
+            for seq in seq_data_dict:
+                rel_lcluster_freqs.append(seq_data_dict[seq].abs_freq / len(cluster))
+
+        # Get the highest two relative frequency clusters
+        top_1: tuple[int | None, float] = None, float('-inf')
+        top_2: tuple[int | None, float] = None, float('-inf')
+        for i, rel_lcluster_freq in enumerate(rel_lcluster_freqs):
+            if rel_lcluster_freq > top_1[1]:
+                top_2 = top_1
+                top_1 = i, rel_lcluster_freq
+            elif rel_lcluster_freq > top_2[1]:
+                top_2 = i, rel_lcluster_freq
+
+        # For plurality_min of 1, we want to consider a relative frequency of 1 to be 'higher', for comparison purposes
+        if top_1[1] == 1:
+            top_1 = top_1[0], float('inf')
+
+        # Return None if the relative frequency does not meet the threshold
+        if top_1[1] < lcluster_plurality_min:
+            return None
+        
+        # Return None if the difference between the firstmost and secondmost highest relative frequencies is too small
+        # i.e., we are not confident which groups of reads are biologically correct
+        if top_1[1] - top_2[1] < lcluster_collision_margin:
+            return None
+
+        # MSA STEP -------------------------------------------------------
+
+        # Perform multiple sequence alignment
+        alignments = list(ConsensusCaller.msa(seq_data_dict))
+
+        # Majority call on a per-base basis
+        # Initialize a list (of the length of the alignment) of empty Counters
+        column_counts: list[Counter] = [Counter() for _ in range(len(alignments[0].seq))]
+        # Determine the frequency of each base at each alignment position
+        for alignment in alignments:
+            for i, char in enumerate(alignment.seq):
+                column_counts[i][char] += 1
+
+        assert len(seq_data_dict) == len(alignments), "Alignment count mismatch"
+
+        for i, seq in enumerate(seq_data_dict):
+            score: int | float = 0
+            # Since dictionaries are ordered, and MAFFT yields ordered output,
+            # we can assume that the alignments remain in the corresponding order
+            seq_alignment = alignments[i].seq
+            seq_qual = seq_data_dict[seq].qual_seq
+            qual_index_offset: int = 0
+            for j, aligned_base in enumerate(seq_alignment):
+                if aligned_base == '-':
+                    qual_index_offset += 1
+                else:
+                    score += (column_counts[j][aligned_base] / column_counts[j].total()) * (1 - exp(seq_qual[j - qual_index_offset]))
+            # Normalize score by length (e.g., mean score per base)
+            # Normalization includes a penalty for gaps
+            seq_data_dict[seq].score = score / (len(seq_qual) + (qual_index_offset * gap_penalty))
+        
+        # Get the highest scoring sequence (a.k.a. the consensus sequence)
+        consensus_seq = max(seq_data_dict, key=lambda k: seq_data_dict[k].score)
+
+        return SeqRecord(seq_record.id, consensus_seq, None), seq_data_dict[consensus_seq].score
+        
+
+    def call_consensuses(self, max_sample_size: int, lcluster_similarity: float, lcluster_plurality_min: float, lcluster_collision_margin: float, msa_gap_penalty: int | float):
         '''TODO'''
         with (
             open_read(self.input_file_path) as input_file_handle,
-            open(self.output_file_path, 'w') as output_file_handle
+            open_write(self.output_file_path) as output_file_handle
         ):
-            output_file_handle.write(f"barcode\tconsensus_sequence_nt\tconsensus_sequence_aa\trelative_freq\tcluster_size\n")
-            for cluster in self.get_cluster_sample(input_file_handle, max_sample_size):
+            output_file_handle.write(f"barcode\tconsensus_sequence_nt\tconsensus_sequence_aa\tscore\n")
+            for i, cluster in enumerate(self.get_cluster_sample(input_file_handle, max_sample_size)):
+                #print(f"Processing cluster {i}... ")
                 # Get the result, continue if there is no consensus
-                cluster_result: tuple[SeqRecord, float, int] | None = self.call_consensus_for_cluster(cluster, plurality_min, collision_margin, self.nt_seq_freq_dict, self.aa_seq_freq_dict)
+                cluster_result: tuple[SeqRecord, float] | None = self.call_consensus_for_cluster_weighted(cluster, lcluster_similarity, lcluster_plurality_min, lcluster_collision_margin, msa_gap_penalty)
                 if cluster_result is None:
+                    #print(f"None\n")
                     continue
-                consensus_seq_record, plurality, cluster_size = cluster_result
-                output_file_handle.write(f"{consensus_seq_record.id}\t{consensus_seq_record.seq}\t{str(Seq(consensus_seq_record.seq).translate())}\t{plurality:.3f}\t{cluster_size}\n")
-
+                #print(f"Consensus found")
+                
+                consensus_seq_record, score = cluster_result
+                #print(f"{consensus_seq_record.id}\t{consensus_seq_record.seq}\t{str(Seq(consensus_seq_record.seq[:len(consensus_seq_record.seq) - (len(consensus_seq_record.seq) % 3)]).translate())}\t{score:.5g}\n")
+                output_file_handle.write(f"{consensus_seq_record.id}\t{consensus_seq_record.seq}\t{str(Seq(consensus_seq_record.seq[:len(consensus_seq_record.seq) - (len(consensus_seq_record.seq) % 3)]).translate())}\t{score:.5f}\n")
+                output_file_handle.flush()
                 
 if __name__ == '__main__':
     args = get_args()
     validate_args(args)
+
+    #print("Running...")
 
     match args.command:
         case 'sort':
             cs = ClusterSorter(args.input_file, args.cluster_file, args.output_file)
             cs.sort_file(args.num_threads)
         case 'consensus':
-            random.seed(args.random_seed)
+            if args.random_seed is None:
+                random_seed = random.randint(10000, 99999)
+            random.seed(random_seed)
             cc = ConsensusCaller(args.input_file, args.output_file)
-            cc.call_consensuses(args.sample_size, args.plurality_min, args.collision_margin)
+            
+            # with (
+            #     open_read(args.input_file) as input_file_handle,
+            #     open_write(args.output_file) as output_file_handle
+            # ):
+            #     for cluster in cc.get_cluster_sample(input_file_handle, 1000):
+                    
+            #         length_counts = Counter()
+            #         for seq_record in cluster:
+            #             length_counts[len(seq_record.seq)] += 1
+
+            #         length_counts_sorted = length_counts.most_common()
+            #         if len(length_counts_sorted) > 1:
+            #             print(f"{cluster[0].id}\t{length_counts_sorted}")
+                    #length_counts = length_counts.most_common()
+                    #for length_count in length_counts.most_common():
+                    #    print(f"{length_count[0]}\t{length_counts[1]}")
+
+            
+            cc.call_consensuses(args.sample_size, args.lclust_similarity, args.lclust_plurality_min, args.lclust_collision_margin, args.gap_penalty)
+    
+
 
     # for seq in cc.nt_seq_freq_dict:
     #     print(f"{cc.nt_seq_freq_dict[seq]} {len(seq)}")
