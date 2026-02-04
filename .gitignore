@@ -1,0 +1,15 @@
+lengths.tsv
+sbatch_fastq_unique_bc_count.sh
+sbatch_fastq_unique_seq_count.sh
+test_noN.ol.fasta
+chimera_notebook_mls.md
+sbatch_fastq_unique_seq_count
+consensus/sorted_seq_counts.txt
+consensus/consensus
+consensus/sort
+extract/results
+Makayla_test
+Makayla_test_2.txt
+original_pacbio_pipeline
+uniqseq
+nextflow_scripts/original_pacbio_pipeline
