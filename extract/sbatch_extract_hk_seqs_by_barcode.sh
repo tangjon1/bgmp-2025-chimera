@@ -3,7 +3,8 @@
 #SBATCH --partition=bgmp
 #SBATCH --mem=64GB
 #SBATCH --cpus-per-task=40
-#SBATCH --job-name=extract
+#SBATCH -w n0355
+#SBATCH --job-name=extract3
 #SBATCH --out=/projects/bgmp/shared/groups/2025/chimera/jonat/bgmp-2025-chimera/extract/results/slurm/slurm-%j.out
 #SBATCH --err=/projects/bgmp/shared/groups/2025/chimera/jonat/bgmp-2025-chimera/extract/results/slurm/slurm-%j.err
 
