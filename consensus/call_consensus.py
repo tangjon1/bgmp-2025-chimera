@@ -23,6 +23,9 @@ from collections.abc import Sequence
 # Random sampling
 import random
 
+# Multiprocessing
+from multiprocessing import Pool
+
 # Consensus calling
 from dataclasses import dataclass, field
 from collections import defaultdict, Counter
@@ -32,6 +35,9 @@ import editdistance
 
 # STDERR access
 import sys
+
+# Timing
+import time
 
 # Misc
 from os import path
@@ -83,6 +89,7 @@ def get_args() -> argparse.Namespace:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('-i', '--input-file', help="Input FASTA/Q containing sequences to call consensus on", required=True)
     common.add_argument('-o', '--output-file', help="Output sequence file. If omitted, print to STDOUT")
+    common.add_argument('-l', '--output-log', help="File for logging diagnostic information. If omitted, print to STDERR")
     common.add_argument('-f', '--input-format', help="Force the program to register the input file as a specific format", choices=['auto', 'fasta', 'fastq'], default='auto')
     common.add_argument('-t', '--num-threads', help="The number of cores to be used by the program", type=int, default=1)
 
@@ -93,7 +100,7 @@ def get_args() -> argparse.Namespace:
     consensus_parser.add_argument('-s', '--sample-size', help="For id-clusters with more sequences than this specified size, use a random sample of sequences from the cluster instead", type=int, default=500)
     consensus_parser.add_argument('-r', '--random-seed', help="Set a random seed for random sampling (reproducibility)")
     consensus_parser.add_argument('-g', '--gap-penalty', help="A value g such that when normalizing scores by length of sequences, add g to the divisor for every gap in the aligned sequence", type=unit_interval, default=0.1)
-    consensus_parser.add_argument('-l', '--lclust-similarity', help="A value l in the interval [0, 1]. Represents the sequence similarity used when clustering by Levenshtein distance (l-cluster), as a fraction of the length of the longer of the two sequences; 1 = do not calculate distances)", type=unit_interval, default=1)
+    consensus_parser.add_argument('-y', '--lclust-similarity', help="A value y in the interval [0, 1]. Represents the sequence similarity used when clustering by Levenshtein distance (l-cluster), as a fraction of the length of the longer of the two sequences; 1 = do not calculate distances", type=unit_interval, default=0.95)
     consensus_parser.add_argument('-p', '--lclust-plurality-min', help="A value p in the interval [0, 1]. l-cluster sequences must comprise a relative frequency greater than p across the id-cluster for the id-cluster to be considered for consensus. 0: No minimum relative frequency; 1 = l-cluster must comprise entire id-cluster", type=unit_interval, default=0.5)
     consensus_parser.add_argument('-m', '--lclust-collision-margin', help="A value m in the interval [0, 1]. The difference in relative frequency between the l-clusters with the highest and second-highest frequencies must be greater than m in order to not be considered a collision", type=unit_interval, default=0.1)
 
@@ -105,6 +112,15 @@ def validate_args(args: argparse.Namespace) -> None:
     pass
 
 
+def render_args(mode, args: argparse.Namespace) -> str:
+    '''Render the run mode (e.g. 'sort', 'consensus') and all set arguments as a string, separated by newlines'''
+    arg_summary: str = ""
+    arg_summary += f"MODE: {mode}\n"
+    for parameter, argument in vars(args).items():
+        arg_summary += f"\t{parameter}: {argument}\n"
+    return arg_summary
+
+
 def open_read(file_path: str) -> IO[Any] | TextIOWrapper:
     '''Takes an input file path and returns the file handle using the appropriate open() function, based on whether or not the file is compressed (ends with '.gz') or not.'''
     if file_path.endswith(".gz"):
@@ -112,9 +128,10 @@ def open_read(file_path: str) -> IO[Any] | TextIOWrapper:
     return open(file_path, 'r')
 
 
-def open_write(file_path: str, mode='w'):
+def open_write(file_path: str, mode='w', default_file_handle=sys.stdout):
+    '''TODO'''
     if file_path == '-' or file_path is None:
-        return sys.stdout
+        return default_file_handle
     return open(file_path, mode)
 
 
@@ -438,9 +455,13 @@ class ConsensusCaller:
 
         return clusters
 
+
     @staticmethod
-    def call_consensus_for_cluster_weighted(cluster: list[SeqRecord], lcluster_similarity: float, lcluster_plurality_min: float, lcluster_collision_margin, gap_penalty: int | float) -> tuple[SeqRecord, float] | None:
+    def call_consensus_for_cluster_weighted(cluster: list[SeqRecord], lcluster_similarity: float, lcluster_plurality_min: float, lcluster_collision_margin: float, gap_penalty: int | float) -> tuple[SeqRecord | None, float | None, int, float]:
         '''TODO'''
+        # Time this cluster
+        time_start = time.perf_counter()
+
         # Get the frequency of each sequence in the cluster
         seq_data_dict: dict[str, SeqConsensusData] = dict()
         for seq_record in cluster:
@@ -460,6 +481,7 @@ class ConsensusCaller:
         # Group seqs by the given similarity
         # Ultimately produce a list relative frequencies of each lcluster (as implemented, unassociated with sequences)
         rel_lcluster_freqs: list[int | float]
+        # If similarity argument is 1, no actual lclustering is required
         if lcluster_similarity < 1:
             lclusters: list[list[int]] = ConsensusCaller.cluster_seqs_by_ldist(seq_data_seqs, lcluster_similarity)
         
@@ -496,12 +518,12 @@ class ConsensusCaller:
 
         # Return None if the relative frequency does not meet the threshold
         if top_1[1] < lcluster_plurality_min:
-            return None
+            return None, None, len(cluster), time.perf_counter() - time_start
         
         # Return None if the difference between the firstmost and secondmost highest relative frequencies is too small
         # i.e., we are not confident which groups of reads are biologically correct
         if top_1[1] - top_2[1] < lcluster_collision_margin:
-            return None
+            return None, None, len(cluster), time.perf_counter() - time_start
 
         # MSA STEP -------------------------------------------------------
 
@@ -537,67 +559,59 @@ class ConsensusCaller:
         # Get the highest scoring sequence (a.k.a. the consensus sequence)
         consensus_seq = max(seq_data_dict, key=lambda k: seq_data_dict[k].score)
 
-        return SeqRecord(seq_record.id, consensus_seq, None), seq_data_dict[consensus_seq].score
-        
+        return SeqRecord(seq_record.id, consensus_seq, None), seq_data_dict[consensus_seq].score, len(cluster), time.perf_counter() - time_start
+    
 
-    def call_consensuses(self, max_sample_size: int, lcluster_similarity: float, lcluster_plurality_min: float, lcluster_collision_margin: float, msa_gap_penalty: int | float):
+    def generate_cluster_worker_input(self, input_file_handle: IO[Any] | TextIOWrapper, max_sample_size: int, lcluster_similarity: float, lcluster_plurality_min: float, lcluster_collision_margin: float, msa_gap_penalty: int | float) -> Iterator[tuple[list[SeqRecord], float, float, float, int | float]]:
+        '''
+        Generates the input for the consensus calling, packing it into a tuple (to pass to multiple processes)
+        '''
+        for cluster in self.get_cluster_sample(input_file_handle, max_sample_size):
+            yield cluster.copy(), lcluster_similarity, lcluster_plurality_min, lcluster_collision_margin, msa_gap_penalty
+
+
+    @staticmethod
+    def wrapper_call_consensus_for_cluster_weighted(call_consensus_input: tuple[list[SeqRecord], float, float, float, int | float]) -> tuple[SeqRecord | None, float | None, int, float]:
+        '''
+        Wrapper function for consensus calling function that unpacks the input tuple.
+        '''
+        return ConsensusCaller.call_consensus_for_cluster_weighted(*call_consensus_input)
+
+
+    def call_consensuses(self, num_threads: int, max_sample_size: int, lcluster_similarity: float, lcluster_plurality_min: float, lcluster_collision_margin: float, msa_gap_penalty: int | float):
         '''TODO'''
         with (
+            Pool(processes=num_threads) as pool,
             open_read(self.input_file_path) as input_file_handle,
             open_write(self.output_file_path) as output_file_handle
         ):
             output_file_handle.write(f"barcode\tconsensus_sequence_nt\tconsensus_sequence_aa\tscore\n")
-            for i, cluster in enumerate(self.get_cluster_sample(input_file_handle, max_sample_size)):
-                #print(f"Processing cluster {i}... ")
-                # Get the result, continue if there is no consensus
-                cluster_result: tuple[SeqRecord, float] | None = self.call_consensus_for_cluster_weighted(cluster, lcluster_similarity, lcluster_plurality_min, lcluster_collision_margin, msa_gap_penalty)
-                if cluster_result is None:
-                    #print(f"None\n")
-                    continue
-                #print(f"Consensus found")
-                
-                consensus_seq_record, score = cluster_result
-                #print(f"{consensus_seq_record.id}\t{consensus_seq_record.seq}\t{str(Seq(consensus_seq_record.seq[:len(consensus_seq_record.seq) - (len(consensus_seq_record.seq) % 3)]).translate())}\t{score:.5g}\n")
-                output_file_handle.write(f"{consensus_seq_record.id}\t{consensus_seq_record.seq}\t{str(Seq(consensus_seq_record.seq[:len(consensus_seq_record.seq) - (len(consensus_seq_record.seq) % 3)]).translate())}\t{score:.5f}\n")
-                output_file_handle.flush()
+            for i, cluster_result in enumerate(pool.imap_unordered(ConsensusCaller.wrapper_call_consensus_for_cluster_weighted, self.generate_cluster_worker_input(input_file_handle, max_sample_size, lcluster_similarity, lcluster_plurality_min, lcluster_collision_margin, msa_gap_penalty), chunksize=50)):
+                print(f"id-cluster\t{i + 1}", end='', file = sys.stderr)
+                consensus_seq_record, score, cluster_size, elapsed_time = cluster_result
+                if consensus_seq_record is None:
+                    print(f"\tCollision", end='', file=sys.stderr)
+                else:
+                    print(f"\tConsensus", end='', file=sys.stderr)
+                    output_file_handle.write(f"{consensus_seq_record.id}\t{consensus_seq_record.seq}\t{str(Seq(consensus_seq_record.seq[:len(consensus_seq_record.seq) - (len(consensus_seq_record.seq) % 3)]).translate())}\t{score:.5f}\n")
+                    output_file_handle.flush()
+                print(f"\t{cluster_size}\t{elapsed_time:.6f}", file=sys.stderr, flush=True)
+
                 
 if __name__ == '__main__':
     args = get_args()
     validate_args(args)
 
-    #print("Running...")
-
     match args.command:
-        case 'sort':
+        case 'sort' as mode:
+            print(render_args(mode, args), file=sys.stderr, flush=True)
             cs = ClusterSorter(args.input_file, args.cluster_file, args.output_file)
             cs.sort_file(args.num_threads)
-        case 'consensus':
+        case 'consensus' as mode:
+            print(render_args(mode, args), file=sys.stderr, flush=True)
             if args.random_seed is None:
                 random_seed = random.randint(10000, 99999)
             random.seed(random_seed)
-            cc = ConsensusCaller(args.input_file, args.output_file)
-            
-            # with (
-            #     open_read(args.input_file) as input_file_handle,
-            #     open_write(args.output_file) as output_file_handle
-            # ):
-            #     for cluster in cc.get_cluster_sample(input_file_handle, 1000):
-                    
-            #         length_counts = Counter()
-            #         for seq_record in cluster:
-            #             length_counts[len(seq_record.seq)] += 1
-
-            #         length_counts_sorted = length_counts.most_common()
-            #         if len(length_counts_sorted) > 1:
-            #             print(f"{cluster[0].id}\t{length_counts_sorted}")
-                    #length_counts = length_counts.most_common()
-                    #for length_count in length_counts.most_common():
-                    #    print(f"{length_count[0]}\t{length_counts[1]}")
-
-            
-            cc.call_consensuses(args.sample_size, args.lclust_similarity, args.lclust_plurality_min, args.lclust_collision_margin, args.gap_penalty)
+            cc = ConsensusCaller(args.input_file, args.output_file)            
+            cc.call_consensuses(args.num_threads, args.sample_size, args.lclust_similarity, args.lclust_plurality_min, args.lclust_collision_margin, args.gap_penalty)
     
-
-
-    # for seq in cc.nt_seq_freq_dict:
-    #     print(f"{cc.nt_seq_freq_dict[seq]} {len(seq)}")
