@@ -403,7 +403,7 @@ Command error:
 
 ## 11/07/2025 backing up original data, fixing my github repo, running nextflow on 2 small files
 
-making a backup of the original data on the external hard drive (1TB)
+### making a backup of the original data on the external hard drive (1TB)
 
 ```bash
 cd /mnt/d/ChimeraBackup2025
@@ -411,7 +411,7 @@ rsync -av -e ssh mlscha@login.talapas.uoregon.edu:/projects/bgmp/shared/groups/2
 ```
 this started around 10:40 pm and seems to take a while given the large data files.
 
-fixing the github repo
+### fixing the github repo
 1. made a copy of the current repo (with a new name)
 2. re-cloned the repo
 3. checked that I could push to the repo
@@ -419,7 +419,80 @@ fixing the github repo
 5. move all other repo copies to a folder
 6. rename the current working repo to "bgmp-2025-chimera-fixed"
 
-running nextflow on 2 small files AND keeping each output file in a directory named for it's corresponding process
+### running nextflow on 2 small files AND keeping each output file in a directory named for it's corresponding process
     ex. dcus.merged.fq would be saved in the bbmerge_out folder 
     and the dcus.merged.cut.trim.fq would be in the hts_out folder
 
+seems like this error from yesterday means that it won't make a new directory for me...
+Command error:
+  ERROR: Error: Cannot write to /projects/bgmp/shared/groups/2025/chimera/mlscha/bgmp-2025-chimera/110625_shortdata/hts_primers_out/DcuS_Asp10_S36_L004_merged_flip_stats.txt: No such file or directory
+
+"mkdir -p" seems to be a command to initialize a parent directory if one has not yet been made so I will try that... if I just did mkdir it may override or error
+
+This seems to work!!
+
+Checking to see if the output is as expected. It seems to be dropping the R somehow so I'd like to add that back in
+
+## 11/09/25 check the 2 file output
+
+```bash
+[mlscha@login2 bgmp-2025-chimera-fixed]$ diff ./110725_longdata/05-starcode/DcuS_Asp10_S36_L004.collapse.d1.tsv 110325_nf_onepair/DcuS_Asp10_S36_L004_R_merged_flip_trim_SE_collapse_d1.tsv -s
+Files ./110725_longdata/05-starcode/DcuS_Asp10_S36_L004.collapse.d1.tsv and 110325_nf_onepair/DcuS_Asp10_S36_L004_R_merged_flip_trim_SE_collapse_d1.tsv are identical
+```
+Both output files are identical! I will set up to run on the entire set.
+This took 4 hours and 26 min given 16cpus.
+
+## 12/06/2025
+how many cells were sequenced before running the Illumina pipeline from the Illumina sequencing data across all fluorescence bins?
+```bash
+zcat A1_S25_R2_001.fastq.gz| wc -l
+```
+Output:
+239,429,544
+
+So over 200 million cells...
+
+Just to be sure, lets check all lines in the aspartate condition
+```bash
+zcat A* | wc -l 
+```
+Output:
+4,588,092,400 lines
+
+This includes R1 and R2, so this needs to be halved for the merging:
+2,294,046,200 cells in Aspartate
+
+We have 3 conditions so how many total?
+2,294,046,200 x 3 = 6,882,138,600
+
+so ~7 billion cells were sequenced
+
+## 01/14/2026
+The last nextflow script (110925_fullNovadata.nf) was using an older version of bbtools. 
+
+I want to make sure that we are using the newer version.
+
+Step 0. Make a new script.
+011426_fullNova_newBBtools.nf
+
+Step 1. Update the environment being called in the nextflow script
+```bash
+conda "/gpfs/projects/bgmp/shared/groups/2025/chimera/envs/getBarcodes" //--new bbtools version (39.38)
+```
+
+Step 2. Check which version
+```bash
+cd /gpfs/projects/bgmp/shared/groups/2025/chimera/envs/getBarcodes/bbmap
+./bbversion.sh
+```
+Output: 39.38
+
+Step 3. Update where the output goes so we don't override the last set of data.
+- find and replace everything that says 110925_fullNovadata with 011426_fullNova_newBBtools
+
+
+Step 4. Make a new shell script
+- shell script is named 011426_fullNova_newBBtools.sh
+- find and replace everything that says 110925_fullNovadata with 011425_fullNova_newBBtools
+
+Step 5. Run the new script
