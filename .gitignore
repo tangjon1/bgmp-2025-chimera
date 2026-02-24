@@ -14,3 +14,4 @@ original_pacbio_pipeline
 uniqseq
 nextflow_scripts/original_pacbio_pipeline
 .vscode
+/short_read_pipeline/basic_pipeline/backupcopy.sh
