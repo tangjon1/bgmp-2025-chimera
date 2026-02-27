@@ -12,6 +12,12 @@ This program requires Python 3.14+, in addition to the following packages:
 |[`mafft`](https://mafft.cbrc.jp/)|7.526|`conda-forge`|[MAFFT website]|
 |[`editdistance`](https://pypi.org/project/editdistance/)|0.8.1|PyPI (`pip`)|
 
+The environment can also be constructed from the provided [YAML file](./environment.yml) with the following command:
+
+```bash
+conda env create -f environment.yml
+```
+
 ## Usage
 
 For efficient consensus calling functionality en masse, the input must be a FASTA/Q file where records are sorted by header. Sequences with the same header will be considered for consensus calling together—a single sequence is selected from the group.
