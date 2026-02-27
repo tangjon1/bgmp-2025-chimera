@@ -2,6 +2,16 @@
 
 This repository comprises the data-processing scripts and pipelines developed in conjunction with the Plesa Lab at the University of Oregon in order to investigate novel ligand binding specificity in mutagenized sensor proteins using a fluorescent model.
 
+## Background
+
+The Plesa Lab [Website Here](https://www.plesalab.org/research.html) works on understanding and engineering biological systems, and along with projects like this seeks to further understand sequence-function relationships in proteins. Specifically, this project focuses on the bacterial sensor protein family of Sensor Histidine Kinases (SHKs). While many of these proteins exist and allow bacteria to respond to their environment, not many of them have been fully characterized. This project looks to close that gap, allowing us to better understand and characterize existing proteins as well as enable the engineering of new ones. To do this, this project analyzes the response of mutagenized DcuS variants to binding a novel ligand to discover the links between the protein's sequence and function.
+
+## Experimental Design
+
+Here we analyze the response of the Dcus variants to their native ligand, fumarate, and a novel ligand, aspartate. By observing the binding affinity of different variants to both fumarate and aspartate, we hope to characterize crucial parts of the protein sequence which determine function. The Plesa Lab created a plasmid library containing mutant sequences of the original DcuS sequence. Each plasmid also contains a unique 24 bp barcode sequence which is used to identify the variants after tbey are sorted by the assay. The assay uses fluorescent response to sort the variants, allow us to assess binding function. To create this fluorescent response, the bacterium in the assay has been engineered to produce a fluorescent response to the EnVZ intermembrane protein. By fusing the DcuS variants to this EnvZ protein, we are therefore able to analyze the fluorescent response.
+
+Here we perform sequencing analysis in two parts on the plasmid library. The first uses longer read sequencing to identify each variant with its corresponding barcode sequence. The second uses shorter read sequencing to identify the variants after they have been sorted according to their fluorescent response in the assay. By combining these two techniques, we can see how changes in variant sequence lead to changes in ligand binding.
+
 ## Overview
 
 There are 3 pipelines described in this repository. One is for parsing long-read PacBio sequencing data to extract gene sequences, barcodes, and perform consensus calling. The other is for the short-read Illumina sequencing data to merge paired-end sequencing data, extract barcodes, and cluster barcodes. The short-read sequencing pipeline has the option to run each of the steps within a Bash script OR run the workflow in a more parallelized manner within Nextflow. 
