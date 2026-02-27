@@ -1,0 +1,143 @@
+---
+title: "Calculate Median Fluorescence"
+author: "Makayla"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+```
+
+# 1. Read in Median Bin data for all 3 ligand conditions (NL, Fum, and Asp)
+```{r}
+medianBin_NL = read.csv("medianBin_NL", header = T)
+medianBin_Fum = read.csv("medianBin_Fum", header = T)
+medianBin_Asp = read.csv("medianBin_Asp", header = T)
+```
+
+# 2. Filter out barcodes here that don't have at least 25 total reads across all bins (and rename median, upper, and lower index to flag the ligand (ex. NL_median))
+```{r}
+filtered_NL = medianBin_NL %>% 
+  filter(total_barcode_reads >= 25) %>% 
+  rename(NL_total_bc_reads = total_barcode_reads,
+         NL_lower_index = lower_index,
+         NL_upper_index = upper_index,
+         NL_median = median) %>% 
+  select(-cumulative_p, -X) %>% #remove un-needed columns
+  select(-AA_sequence) #will be added back later...
+
+filtered_Fum = medianBin_Fum %>% 
+  filter(total_barcode_reads >= 25) %>% 
+  rename(Fum_total_bc_reads = total_barcode_reads,
+         Fum_lower_index = lower_index,
+         Fum_upper_index = upper_index,
+         Fum_median = median) %>% 
+  select(-cumulative_p, -X) %>%  #remove un-needed columns
+  select(-AA_sequence) #will be added back later...
+
+filtered_Asp = medianBin_Asp %>% 
+  filter(total_barcode_reads >= 25) %>% 
+  rename(Asp_total_bc_reads = total_barcode_reads,
+         Asp_lower_index = lower_index,
+         Asp_upper_index = upper_index,
+         Asp_median = median) %>% 
+  select(-cumulative_p, -X) %>%  #remove un-needed columns
+  select(-AA_sequence) #will be added back later...
+```
+
+
+# 3. Merge All Ligand Conditions
+## 3.1 Load consensus output data 
+```{r}
+#read in the file
+consensus_barcodes = read.delim("extract.consensus.tsv", header = TRUE) %>% dplyr::select(-consensus_sequence_nt, - relative_freq, -cluster_size) %>% rename(AA_sequence = consensus_sequence_aa)
+#nrow(consensus_barcodes) #number of barcodes
+head(consensus_barcodes) #- 2 columns (barcode and Amino Acid Sequence)
+```
+
+## 3.2 merge data and re-add AA sequences and keep relevant columns
+```{r}
+merged = inner_join(filtered_NL, filtered_Asp, by = "barcode") %>% 
+  inner_join(filtered_Fum, by = "barcode") %>%  
+  inner_join(consensus_barcodes, by = "barcode") %>% 
+  select(barcode, AA_sequence, NL_lower_index, NL_upper_index, NL_median, Fum_lower_index, Fum_upper_index, Fum_median, Asp_lower_index, Asp_upper_index, Asp_median) %>% 
+  mutate(NL_lower_index = ifelse(is.infinite(NL_lower_index), 1, NL_lower_index), #update all lower indexes with -inf values
+         Fum_lower_index = ifelse(is.infinite(Fum_lower_index), 1, Fum_lower_index),
+         Asp_lower_index = ifelse(is.infinite(Asp_lower_index), 1, Asp_lower_index),)
+# nrow(merged) #~56,000 barcodes
+# nrow(consensus_barcodes) #~800,000 barcodes
+```
+
+# 4. Convert to MEFL
+## 4.1 Load in the MEFL bin data
+```{r}
+# load the MEFL bin data - using the new tsv sent from Luca!
+bin_to_MEFL_FA = read.delim("new_bins_to_MEFL_Fumarate-Aspartate.tsv", header = TRUE) %>% 
+  rename(MEFL = X488.1..530_30.A,
+         bin = X)
+
+bin_to_MEFL_NL = read.delim("new_bins_to_MEFL_NoLigand.tsv", header = TRUE) %>% 
+  rename(MEFL = X488.1..530_30.A,
+         bin = X)
+
+# Create an interpolation function to convert nondiscreet bin values to MEFL
+bin_to_MEFL_inter_NL <- approxfun(bin_to_MEFL_NL$bin, bin_to_MEFL_NL$MEFL, rule = 2)
+bin_to_MEFL_inter_FA <- approxfun(bin_to_MEFL_FA$bin, bin_to_MEFL_FA$MEFL, rule = 2)
+
+
+# Convert from bin to MEFL
+Bin_to_MEFL_all <- merged %>%
+  mutate(
+    NL_LowerIndex_MEFL = bin_to_MEFL_inter_NL(NL_lower_index),
+    NL_UpperIndex_MEFL = bin_to_MEFL_inter_NL(NL_upper_index),
+    NL_Median_MEFL = bin_to_MEFL_inter_NL(NL_median),
+    Fum_LowerIndex_MEFL = bin_to_MEFL_inter_FA(Fum_lower_index),
+    Fum_UpperIndex_MEFL = bin_to_MEFL_inter_FA(Fum_upper_index),
+    Fum_Median_MEFL = bin_to_MEFL_inter_FA(Fum_median),
+    Asp_LowerIndex_MEFL = bin_to_MEFL_inter_FA(Asp_lower_index),
+    Asp_UpperIndex_MEFL = bin_to_MEFL_inter_FA(Asp_upper_index),
+    Asp_Median_MEFL = bin_to_MEFL_inter_FA(Asp_median)
+  )
+
+MEFL = Bin_to_MEFL_all %>% select(barcode, AA_sequence, NL_Median_MEFL, Fum_Median_MEFL, Asp_Median_MEFL)
+```
+
+
+# 5. Filter WT
+```{r}
+# update the amino acid sequence below with the amino acid sequence of the WT
+WT_MEFL = MEFL %>% filter(AA_sequence == "RHSLPYRMLRKRPMKLSTTVILMVSAVLFSVLLVVHLIYFSQISDMTRDGLANKALAVARTLADSPEIRQGLQKKPQESGIQAIAEAVRKRNDLLFIVVTDMQSLRYSHPEAQRIGQPFKGDDILKALNGEENVAINRGFLAQALRVFTPIYDENHKQIGVVAIGLELSRVTQQINDSRWSLQMAAGVKQLA")
+nrow(WT_MEFL) # 1890 barcodes associated with WT AA sequence
+head(WT_MEFL)
+```
+
+
+# 6. Get Medians for the median MEFL for WT barcodes in all 3 conditions
+```{r}
+# Median values for each condition for the WT
+NL_Median_WT = median(WT_MEFL$NL_Median_MEFL)
+Fum_Median_WT = median(WT_MEFL$Fum_Median_MEFL)
+Asp_Median_WT = median(WT_MEFL$Asp_Median_MEFL)
+```
+
+
+# 7. Normalize by WT fluorescence and then by no ligand
+```{r}
+normalized_MEFL = MEFL %>% 
+  mutate(Fum_wo_NL = Fum_Median_MEFL / NL_Median_MEFL,# 0. normalize by just NL
+         Asp_wo_NL = Asp_Median_MEFL / NL_Median_MEFL,
+         NL_wo_WT = NL_Median_MEFL/NL_Median_WT,         # 1. normalize by the WT over each of the 3 conditions
+         Fum_wo_WT = Fum_Median_MEFL / Fum_Median_WT,
+         Asp_wo_WT = Asp_Median_MEFL / Asp_Median_WT,
+         Fum_wo_WTandNL = Fum_wo_WT - NL_wo_WT,           # 2. normalize both ligand conditions by no ligand condition
+         Asp_wo_WTandNL = Asp_wo_WT - NL_wo_WT)
+head(normalized_MEFL)
+```
+
+# 8. Write out to a file
+```{r}
+write.csv(normalized_MEFL, "./normalized_MEFL", row.names = FALSE)
+```
