@@ -14,7 +14,8 @@ There are 2 pipelines outlined in this repository. One is for parsing long-read 
 - [`Run in Bash`](./short_read_pipeline/basic_pipeline/README.md)
 - [`Run using Nextflow`](./short_read_pipeline/nextflow_pipeline/README.md)
 
-3. [`Calculating Median Fluorescence`](./median_fluorescence/README.md)
+3. Calculating Median Fluorescence Pipeline
+- [`Median Fluorescence`](./median_fluorescence/README.md)
 
 ## Acknowledgements
 
