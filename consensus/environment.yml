@@ -1,4 +1,4 @@
-name: /gpfs/projects/bgmp/shared/groups/2025/chimera/envs/biopython
+name: consensus
 channels:
   - conda-forge
   - bioconda
