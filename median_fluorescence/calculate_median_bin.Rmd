@@ -1,0 +1,213 @@
+---
+title: "Calculate Median Bin"
+author: "Makayla"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+
+# 1. Read in the collapsed barcode data files
+```{r}
+#No Ligand
+NL1 = read.delim("NL1_S1.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL1 = V2) %>% select(-V3)
+NL2 = read.delim("NL2_S2.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL2 = V2) %>% select(-V3)
+NL3 = read.delim("NL3_S3.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL3 = V2) %>% select(-V3)
+NL4 = read.delim("NL4_S4.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL4 = V2) %>% select(-V3)
+NL5 = read.delim("NL5_S5.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL5 = V2) %>% select(-V3)
+NL6 = read.delim("NL6_S6.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL6 = V2) %>% select(-V3)
+NL7 = read.delim("NL7_S7.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL7 = V2) %>% select(-V3)
+NL8 = read.delim("NL8_S8.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL8 = V2) %>% select(-V3)
+NL9 = read.delim("NL9_S9.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL9 = V2) %>% select(-V3)
+NL10 = read.delim("NL10_S10.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL10 = V2) %>% select(-V3)
+NL11 = read.delim("NL11_S11.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL11 = V2) %>% select(-V3)
+NL12 = read.delim("NL12_S12.collapse.d1.tsv", header = FALSE) %>% 
+  rename(NL12 = V2) %>% select(-V3)
+```
+
+# 2. Join the data (counts tables (C)) and replace NAs with 0
+```{r}
+counts_NL = full_join(NL1, NL2, by = "V1") %>%
+  full_join(NL3, by = "V1") %>%
+  full_join(NL4, by = "V1") %>%
+  full_join(NL5, by = "V1") %>%
+  full_join(NL6, by = "V1") %>%
+  full_join(NL7, by = "V1") %>%
+  full_join(NL8, by = "V1") %>%
+  full_join(NL9, by = "V1") %>%
+  full_join(NL10, by = "V1") %>%
+  full_join(NL11, by = "V1") %>%
+  full_join(NL12, by = "V1") %>%
+  rename(barcode = V1) %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(total_barcode_reads = rowSums(across(c(NL1, NL2, NL3, NL4, NL5, NL6, NL7, NL8, NL9, NL10, NL11, NL12))))
+
+#head(counts_NL)
+#nrow(counts_NL)
+```
+
+# 3. Filter barcodes by expected barcode length (in this case, 24bp) or greater
+```{r}
+counts_NL = counts_NL %>% filter(str_length(barcode) >= 24)
+#nrow(counts_NL)
+```
+
+# 4. Make the Relative Abundance Table (R)
+```{r}
+R_NL = counts_NL %>% 
+  mutate(NL1 = NL1/sum(counts_NL$NL1)) %>% 
+  mutate(NL2 = NL2/sum(counts_NL$NL2)) %>% 
+  mutate(NL3 = NL3/sum(counts_NL$NL3)) %>% 
+  mutate(NL4 = NL4/sum(counts_NL$NL4)) %>% 
+  mutate(NL5 = NL5/sum(counts_NL$NL5)) %>% 
+  mutate(NL6 = NL6/sum(counts_NL$NL6)) %>% 
+  mutate(NL7 = NL7/sum(counts_NL$NL7)) %>% 
+  mutate(NL8 = NL8/sum(counts_NL$NL8)) %>% 
+  mutate(NL9 = NL9/sum(counts_NL$NL9)) %>% 
+  mutate(NL10 = NL10/sum(counts_NL$NL10)) %>% 
+  mutate(NL11 = NL11/sum(counts_NL$NL11)) %>% 
+  mutate(NL12 = NL12/sum(counts_NL$NL12))
+
+head(R_NL)
+#sum(R_NL$NL1) #sum of column NL1 = 1!
+```
+
+# 5. load consensus data
+Using consensus sequence calling  output file
+```{r}
+#read in the file
+consensus_barcodes = read.delim("extract.consensus.tsv", header = TRUE) %>% dplyr::select(-consensus_sequence_nt, - relative_freq, -cluster_size) %>% rename(AA_sequence = consensus_sequence_aa)
+#nrow(consensus_barcodes) #804,487 barcodes
+head(consensus_barcodes) #- 2 columns (barcode and Amino Acid Sequence)
+```
+
+# 6. Keep only the barcodes seen in the consensus data (Merge consensus and the relative abundance table (R))
+```{r}
+consensus_R_NL = right_join(consensus_barcodes, R_NL, by = "barcode")
+#head(consensus_R_NL)
+#sum(consensus_R_NL$NL12) - all columns still sum to 1
+```
+
+# 7. Merge with presort data and update barcodes not seen in presort data to 0.1 counts
+```{r}
+#read in presort data
+presort = read.delim("PreSort_2_S38.collapse.d1.tsv", header = FALSE)%>%
+  rename(barcode = V1,
+        presort_count = V2,
+        group = V3) %>% 
+  select(-group) 
+#head(presort)
+
+#merge with presort data and set NAs in presort data to 0.1
+consensus_R_presort_NL = consensus_R_NL %>%  
+  left_join(presort, by = "barcode") %>% 
+  mutate(presort_count = ifelse(is.na(presort_count), 0.1, presort_count),
+         presort_abundance = presort_count/sum(presort_count))
+
+
+#Checks for NAs and 0s 
+  #consensus_R_presort_NL %>% is.na() %>% table() all NAs are now 0.1
+  #consensus_R_presort_NL %>% is.na() %>% table()                   #several are NA
+  #consensus_R_presort_NL %>% filter(presort_count == 0) %>%  nrow() # none are 0
+  #consensus_R_presort_NL %>% filter(presort_count == 0.1) %>%  nrow() # 159094 presort counts are 0.1are 0.1
+head(consensus_R_presort_NL)
+```
+
+# 8. Make the fold change (FC) table
+```{r}
+FC_NL = consensus_R_presort_NL %>% 
+  mutate(NL1 = NL1/presort_abundance) %>% #divide all rows by the barcode abundance seen during presort
+  mutate(NL2 = NL2/presort_abundance) %>% 
+  mutate(NL3 = NL3/presort_abundance) %>% 
+  mutate(NL4 = NL4/presort_abundance) %>% 
+  mutate(NL5 = NL5/presort_abundance) %>% 
+  mutate(NL6 = NL6/presort_abundance) %>% 
+  mutate(NL7 = NL7/presort_abundance) %>% 
+  mutate(NL8 = NL8/presort_abundance) %>% 
+  mutate(NL9 = NL9/presort_abundance) %>% 
+  mutate(NL10 = NL10/presort_abundance) %>% 
+  mutate(NL11 = NL11/presort_abundance) %>% 
+  mutate(NL12 = NL12/presort_abundance) %>% 
+  select(-presort_abundance, -presort_count) #remove the presort_abundance column
+
+head(FC_NL)
+```
+
+# 9. Make Adjusted Abundance (A) Table
+```{r}
+AA_NL = FC_NL %>% 
+  mutate(rowSum = rowSums(across(c(NL1, NL2, NL3, NL4, NL5, NL6, NL7, NL8, NL9, NL10, NL11, NL12)))) %>% 
+  mutate(NL1 = NL1/rowSum) %>% 
+  mutate(NL2 = NL2/rowSum) %>% 
+  mutate(NL3 = NL3/rowSum) %>% 
+  mutate(NL4 = NL4/rowSum) %>% 
+  mutate(NL5 = NL5/rowSum) %>% 
+  mutate(NL6 = NL6/rowSum) %>% 
+  mutate(NL7 = NL7/rowSum) %>% 
+  mutate(NL8 = NL8/rowSum) %>% 
+  mutate(NL9 = NL9/rowSum) %>% 
+  mutate(NL10 = NL10/rowSum) %>% 
+  mutate(NL11 = NL11/rowSum) %>% 
+  mutate(NL12 = NL12/rowSum) %>% 
+  select(-rowSum)
+head(AA_NL)
+```
+
+# 10. Find the Median Bin Value
+```{r}
+#Find the "bin" value that corresponds to cumulative relative abundance of 0.5 (Table B)
+# finds the "bin" value that corresponds to cumulative relative abundance of 0.5
+# creating function to computer product
+maxcs = function(x, output){
+  return(max(which(c(x[1],x[2],x[3],x[4],x[5],x[6],x[7],x[8],x[9],x[10],x[11],x[12]) < 0.5)))
+}
+
+#finds the upper bin closest to 0.5
+mincs = function(x, output){
+  return(min(which(c(x[1],x[2],x[3],x[4],x[5],x[6],x[7],x[8],x[9],x[10],x[11],x[12]) >= 0.5)))
+}
+
+B_NL = AA_NL %>% 
+  rowwise() %>% 
+  mutate(
+    cumulative_p = list(cumsum(c(NL1,NL2,NL3,NL4,NL5,NL6,NL7,NL8,NL9,NL10,NL11,NL12))),
+    lower_index = max(which(cumsum(c(NL1,NL2,NL3,NL4,NL5,NL6,NL7,NL8,NL9,NL10,NL11,NL12)) < 0.5)),
+    upper_index = min(which(cumsum(c(NL1,NL2,NL3,NL4,NL5,NL6,NL7,NL8,NL9,NL10,NL11,NL12)) >= 0.5)),
+    median = ifelse(
+      is.infinite(lower_index),
+      format(0, nsmall = 10, scientific = F),
+      ifelse(
+        is.infinite(upper_index),
+        format(12, nsmall = 10, scientific = F),
+      format(signif(lower_index + (0.5 - unlist(cumulative_p)[lower_index]) /
+        (unlist(cumulative_p)[upper_index] - unlist(cumulative_p)[lower_index])
+    , digits = 12), nsmall = 10, scientific = FALSE)))
+  ) %>% 
+  ungroup()
+
+#head(B_NL)
+B_NL %>% select(barcode, median, AA_sequence, everything()) %>% as.data.frame() %>% head()
+#min(B_NL$lower_index)
+```
+
+
+# 11. Output the data to be used in further analysis
+```{r}
+medianBin_NL = B_NL %>% lapply(as.character)
+write.csv(medianBin_NL, "./medianBin_NL")
+```

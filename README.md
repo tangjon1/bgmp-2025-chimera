@@ -4,6 +4,7 @@
 There are 2 pipelines outlined in this repository. One is for parsing long-read PacBio sequencing data to extract gene sequences, barcodes, and perform barcode consensus calling. The other is for the short-read Illumina sequencing data to merge paired-end sequencing data, extract barcodes, and cluster barcodes. The short-read sequencing pipeline has the option to run each of the steps within a Bash script OR run the workflow in a more parallelized manner within Nextflow.
 
 ## How to Set Up and Run
+There are 3 pipelines outlined in this repository. One is for parsing long-read PacBio Sequencing data to extract gene sequences, barcodes, and perform barcode consensus calling. Another is for the short-read Illumina Sequencing data to merge paired end sequencing, extract barcodes, and cluster barcodes. The short read sequencing pipeline has the option to run each of the steps within a bash script OR run the workflow in a more parallelized manner within Nextflow. After running these pipelines, if you are interested, there is an example pipeline in R that explains the calculations for the median fluorescence of the mutant variants.
 
 Below are links to the README files in this repository that describe how to set up and run each pipeline:
 
@@ -18,6 +19,9 @@ Below are links to the README files in this repository that describe how to set 
 ## Methodology
 
 The long- and short-read data processing pipelines were created in the context of barcode-associated variants, derived from mutagenesis. 
+
+3. Calculating Median Fluorescence Pipeline
+- [`Median Fluorescence`](./median_fluorescence/README.md)
 
 ## Acknowledgements
 
