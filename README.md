@@ -4,7 +4,7 @@ This repository comprises the data-processing scripts and pipelines developed in
 
 ## Background
 
-The [Plesa Lab](https://www.plesalab.org/research.html) works on understanding and engineering biological systems, and along with projects like this seeks to further understand sequence-function relationships in proteins. Specifically, this project focuses on the bacterial sensor protein family of Sensor Histidine Kinases (SHKs). While many of these proteins exist and allow bacteria to respond to their environment, not many of them have been fully characterized. This project looks to close that gap, allowing us to better understand and characterize existing proteins as well as enable the engineering of new ones. To do this, this project analyzes the response of mutagenized DcuS variants to binding a novel ligand to discover the links between the protein's sequence and function.
+The [Plesa Lab](https://www.plesalab.org/research.html) works on understanding and engineering biological systems, and along with projects like this, seeks to further understand sequence-function relationships in proteins. Specifically, this project focuses on the bacterial sensor protein family of Sensor Histidine Kinases (SHKs). While many of these proteins exist and allow bacteria to respond to their environment, not many of them have been fully characterized. This project looks to close that gap, allowing us to better understand and characterize existing proteins as well as enable the engineering of new ones. To do this, this project analyzes the response of mutagenized DcuS variants to binding a novel ligand to discover the links between the protein's sequence and function.
 
 ## Experimental Design
 
